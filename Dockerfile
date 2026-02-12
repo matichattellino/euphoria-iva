@@ -15,7 +15,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/package-lock.json ./client/
 RUN npm ci
-RUN cd client && npm install
+RUN cd client && rm -f package-lock.json && npm install
 
 # Install Playwright Chromium browser
 RUN npx playwright install chromium
