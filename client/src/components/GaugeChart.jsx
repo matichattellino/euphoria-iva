@@ -59,16 +59,16 @@ export default function GaugeChart({ debito, credito }) {
           </text>
         </svg>
 
-        <div className="flex gap-6 mt-4 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-red-500"></span>
-            <span className="text-slate-400">Debito</span>
-            <span className="text-white font-mono font-semibold">{formatMoney(debito)}</span>
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-6 mt-4 text-sm w-full items-center">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-3 h-3 shrink-0 rounded-full bg-red-500"></span>
+            <span className="text-slate-400 shrink-0">Debito</span>
+            <span className="text-white font-mono font-semibold whitespace-nowrap">{formatMoney(debito)}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-emerald-500"></span>
-            <span className="text-slate-400">Credito</span>
-            <span className="text-white font-mono font-semibold">{formatMoney(credito)}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-3 h-3 shrink-0 rounded-full bg-emerald-500"></span>
+            <span className="text-slate-400 shrink-0">Credito</span>
+            <span className="text-white font-mono font-semibold whitespace-nowrap">{formatMoney(credito)}</span>
           </div>
         </div>
       </div>
