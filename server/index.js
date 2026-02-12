@@ -1,12 +1,19 @@
+console.log('[startup] Initializing server...');
+console.log('[startup] DATA_DIR:', process.env.DATA_DIR || '(not set)');
+console.log('[startup] PORT:', process.env.PORT || '3001');
+console.log('[startup] NODE_ENV:', process.env.NODE_ENV || '(not set)');
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const multer = require('multer');
+console.log('[startup] Loading services...');
 const AfipService = require('./afip-service');
 const csvService = require('./csv-service');
 const scraperManager = require('./scraper-manager');
 const database = require('./database');
+console.log('[startup] All services loaded.');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -372,6 +379,6 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Euphoria IVA server running on port ${PORT}`);
 });
