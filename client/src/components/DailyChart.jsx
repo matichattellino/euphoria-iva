@@ -16,10 +16,18 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function DailyChart({ data }) {
+  const isEmpty = !data || data.length === 0;
+
   return (
     <div className="bg-dark-800 border border-dark-600 rounded-2xl p-6">
       <h3 className="text-sm font-medium text-slate-400 mb-4">IVA Diario</h3>
 
+      {isEmpty ? (
+        <div className="flex flex-col items-center justify-center py-8 text-slate-500" style={{ height: 240 }}>
+          <p className="text-sm">Sin datos para graficar</p>
+          <p className="text-xs mt-1">Consulta un periodo con comprobantes</p>
+        </div>
+      ) : (
       <ResponsiveContainer width="100%" height={240}>
         <BarChart data={data} barGap={2}>
           <XAxis
@@ -45,6 +53,7 @@ export default function DailyChart({ data }) {
           <Bar dataKey="credito" name="Crédito" fill="#10b981" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
+      )}
     </div>
   );
 }

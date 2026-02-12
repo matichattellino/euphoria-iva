@@ -4,7 +4,12 @@ import ConfigPanel from './components/ConfigPanel';
 import DateRangePicker from './components/DateRangePicker';
 import DataSourceBar from './components/DataSourceBar';
 import CuitInfo from './components/CuitInfo';
-import { mockData, generateMockData } from './utils/mockData';
+import { generateMockData } from './utils/mockData';
+
+const MESES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
 
 function fechaToPeriodo(fechaDesde) {
   const parts = fechaDesde.split('/');
@@ -12,8 +17,25 @@ function fechaToPeriodo(fechaDesde) {
   return `${parts[2]}-${parts[1]}`;
 }
 
+function emptyData(fechaDesde) {
+  const parts = fechaDesde.split('/');
+  const mes = parseInt(parts[1], 10);
+  const anio = parseInt(parts[2], 10);
+  return {
+    periodo: `${MESES[mes - 1] || ''} ${anio}`,
+    resumen: {
+      facturacion_emitida: 0, facturacion_recibida: 0,
+      iva_debito: 0, iva_credito: 0, posicion_iva: 0,
+      cantidad_emitidas: 0, cantidad_recibidas: 0,
+    },
+    emitidas: [],
+    recibidas: [],
+    iva_diario: [],
+  };
+}
+
 export default function App() {
-  const [data, setData] = useState(mockData);
+  const [data, setData] = useState(emptyData('01/01/2026'));
   const [showConfig, setShowConfig] = useState(false);
   const [loading, setLoading] = useState(false);
   const [dataSource, setDataSource] = useState('demo'); // 'demo' | 'csv' | 'arca'
@@ -125,8 +147,8 @@ export default function App() {
   const selectPeriodo = useCallback(async (desde, hasta) => {
     const periodo = fechaToPeriodo(desde);
     if (!periodo) {
-      setData(generateMockData(desde, hasta));
-      setDataSource('demo');
+      setData(emptyData(desde));
+      setDataSource('empty');
       setProveedores(null);
       return;
     }
@@ -141,15 +163,15 @@ export default function App() {
         return;
       }
 
-      // No data found — show mock, user can scrape manually
-      setData(generateMockData(desde, hasta));
-      setDataSource('demo');
+      // No data found — show empty, user can scrape manually
+      setData(emptyData(desde));
+      setDataSource('empty');
       setProveedores(null);
       setLoading(false);
     } catch (e) {
       setError(e.message);
-      setData(generateMockData(desde, hasta));
-      setDataSource('demo');
+      setData(emptyData(desde));
+      setDataSource('empty');
       setProveedores(null);
       setLoading(false);
     }
@@ -280,7 +302,7 @@ export default function App() {
                   ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                   : dataSource === 'csv'
                   ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                  : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
               }`}
             >
               <span
@@ -289,10 +311,10 @@ export default function App() {
                     ? 'bg-emerald-400'
                     : dataSource === 'csv'
                     ? 'bg-blue-400'
-                    : 'bg-amber-400'
+                    : 'bg-slate-400'
                 }`}
               />
-              {dataSource === 'arca' ? 'Conectado' : dataSource === 'csv' ? 'Cache DB' : 'Demo'}
+              {dataSource === 'arca' ? 'Conectado' : dataSource === 'csv' ? 'Cache DB' : 'Sin datos'}
             </span>
 
             <button
