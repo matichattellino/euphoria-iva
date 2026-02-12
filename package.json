@@ -1,0 +1,26 @@
+{
+  "name": "euphoria-iva",
+  "version": "1.0.0",
+  "description": "Dashboard de Posición de IVA / ARCA para Euphoria",
+  "private": true,
+  "scripts": {
+    "server": "node server/index.js",
+    "client": "npm run dev --prefix client",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build": "npm run build --prefix client",
+    "start": "NODE_ENV=production node server/index.js",
+    "scraper": "node src/scraper/arca-scraper.js"
+  },
+  "dependencies": {
+    "@afipsdk/afip.js": "^1.1.2",
+    "adm-zip": "^0.5.16",
+    "better-sqlite3": "^12.6.2",
+    "concurrently": "^8.2.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "multer": "^2.0.2",
+    "papaparse": "^5.5.3",
+    "playwright": "^1.58.2"
+  }
+}
