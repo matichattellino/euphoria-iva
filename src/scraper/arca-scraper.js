@@ -56,6 +56,23 @@ function locate(page, sel) {
 }
 
 /**
+ * Intenta encontrar un elemento visible probando múltiples selectores.
+ * Retorna el primer locator visible, o null si ninguno funciona.
+ */
+async function locateWithFallbacks(page, selectors, timeout = 5000) {
+  for (const sel of selectors) {
+    try {
+      const loc = locate(page, sel);
+      const visible = await loc.first().isVisible({ timeout }).catch(() => false);
+      if (visible) return loc.first();
+    } catch {
+      // probar siguiente
+    }
+  }
+  return null;
+}
+
+/**
  * Parsea "YYYY-MM" y devuelve primer y último día del mes en formato DD/MM/YYYY.
  */
 function parsePeriodo(periodo) {
@@ -270,8 +287,21 @@ async function abrirMisComprobantes(page) {
 async function setDateRange(popup, section, rangeStr) {
   log(`Configurando rango de fechas: ${rangeStr}`);
 
-  const fechaInput = locate(popup, section.fechaInput);
-  await fechaInput.waitFor({ state: 'visible', timeout: TIMEOUT_ACTION });
+  // Intentar múltiples selectores para el input de fecha
+  let fechaInput;
+  if (section.fechaInputs) {
+    fechaInput = await locateWithFallbacks(popup, section.fechaInputs, TIMEOUT_ACTION);
+    if (!fechaInput) {
+      // Último recurso: cualquier input de texto visible
+      fechaInput = await locateWithFallbacks(popup, [
+        { locator: 'input[type="text"]' },
+      ], 5000);
+    }
+    if (!fechaInput) throw new Error('No se encontró el input de fecha');
+  } else {
+    fechaInput = locate(popup, section.fechaInput);
+    await fechaInput.waitFor({ state: 'visible', timeout: TIMEOUT_ACTION });
+  }
   await fechaInput.click({ timeout: TIMEOUT_ACTION });
 
   // Esperar a que el daterangepicker se abra
@@ -364,11 +394,28 @@ async function buscarYDescargarCSV(popup, section, outputPath) {
 
 async function volverAlMenu(popup) {
   log('Volviendo al menú principal...');
-  const menuLink = locate(popup, SELECTORS.emitidos.menuPrincipalLink);
-  await menuLink.waitFor({ state: 'visible', timeout: TIMEOUT_ACTION });
-  await menuLink.click({ timeout: TIMEOUT_ACTION });
-  await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
-  log('En menú principal.');
+
+  // Intentar múltiples selectores para "Menú Principal"
+  if (SELECTORS.emitidos.menuPrincipalLinks) {
+    const menuLink = await locateWithFallbacks(popup, SELECTORS.emitidos.menuPrincipalLinks, 10000);
+    if (menuLink) {
+      await menuLink.click({ timeout: TIMEOUT_ACTION });
+      await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+      log('En menú principal.');
+      return;
+    }
+    // Fallback: navegar atrás
+    log('Link de menú no encontrado, navegando atrás...');
+    await popup.goBack({ timeout: TIMEOUT_NAV });
+    await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+    log('En menú principal (vía navegación atrás).');
+  } else {
+    const menuLink = locate(popup, SELECTORS.emitidos.menuPrincipalLink);
+    await menuLink.waitFor({ state: 'visible', timeout: TIMEOUT_ACTION });
+    await menuLink.click({ timeout: TIMEOUT_ACTION });
+    await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+    log('En menú principal.');
+  }
 }
 
 // ─── Flujo principal ─────────────────────────────────────────────────
@@ -421,9 +468,39 @@ async function main() {
 
     // 3. Emitidos
     log('── Comprobantes Emitidos ──');
-    await locate(popup, SELECTORS.emitidos.link).click({ timeout: TIMEOUT_ACTION });
     await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+    await popup.waitForTimeout(2000); // Esperar a que la página se estabilice
 
+    // Log del HTML para debug si falla
+    const pageTitle = await popup.title().catch(() => 'N/A');
+    log(`Página actual: "${pageTitle}" — URL: ${popup.url()}`);
+
+    // Buscar link de Emitidos con fallbacks
+    const emitidosLink = await locateWithFallbacks(popup, SELECTORS.emitidos.links, TIMEOUT_ACTION);
+    if (emitidosLink) {
+      log('Link de Emitidos encontrado, clickeando...');
+      await emitidosLink.click({ timeout: TIMEOUT_ACTION });
+      await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+    } else {
+      // Si no hay link, tal vez ya estamos en la página de comprobantes
+      log('Link de Emitidos no encontrado — verificando si ya estamos en la sección correcta...');
+      // Tomar screenshot para debug
+      const debugPath = path.join(CSV_DIR, `debug_emitidos_${Date.now()}.png`);
+      await popup.screenshot({ path: debugPath, fullPage: true }).catch(() => {});
+      log(`Screenshot de debug: ${debugPath}`);
+      // Intentar buscar si hay un tab/sección de emitidos
+      const emitidosTab = await locateWithFallbacks(popup, [
+        { locator: '[data-tab="emitidos"], [data-section="emitidos"], .tab-emitidos' },
+        { locator: 'button:has-text("Emitidos"), [role="tab"]:has-text("Emitidos")' },
+      ], 5000);
+      if (emitidosTab) {
+        log('Tab de Emitidos encontrado, clickeando...');
+        await emitidosTab.click({ timeout: TIMEOUT_ACTION });
+        await popup.waitForTimeout(2000);
+      }
+    }
+
+    await popup.waitForTimeout(2000);
     await setDateRange(popup, SELECTORS.emitidos, rangeStr);
     await buscarYDescargarCSV(popup, SELECTORS.emitidos, emitidosPath);
 
@@ -432,9 +509,27 @@ async function main() {
 
     // 5. Recibidos
     log('── Comprobantes Recibidos ──');
-    await locate(popup, SELECTORS.recibidos.link).click({ timeout: TIMEOUT_ACTION });
-    await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+    await popup.waitForTimeout(2000);
 
+    const recibidosLink = await locateWithFallbacks(popup, SELECTORS.recibidos.links, TIMEOUT_ACTION);
+    if (recibidosLink) {
+      log('Link de Recibidos encontrado, clickeando...');
+      await recibidosLink.click({ timeout: TIMEOUT_ACTION });
+      await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+    } else {
+      log('Link de Recibidos no encontrado — verificando tabs...');
+      const recibidosTab = await locateWithFallbacks(popup, [
+        { locator: '[data-tab="recibidos"], [data-section="recibidos"], .tab-recibidos' },
+        { locator: 'button:has-text("Recibidos"), [role="tab"]:has-text("Recibidos")' },
+      ], 5000);
+      if (recibidosTab) {
+        log('Tab de Recibidos encontrado, clickeando...');
+        await recibidosTab.click({ timeout: TIMEOUT_ACTION });
+        await popup.waitForTimeout(2000);
+      }
+    }
+
+    await popup.waitForTimeout(2000);
     await setDateRange(popup, SELECTORS.recibidos, rangeStr);
     await buscarYDescargarCSV(popup, SELECTORS.recibidos, recibidosPath);
 
