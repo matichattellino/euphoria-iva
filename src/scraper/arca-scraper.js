@@ -135,9 +135,10 @@ async function login(page) {
   await locate(page, SELECTORS.login.ingresarBtn).click({ timeout: TIMEOUT_ACTION });
 
   // Esperar a que cargue el portal (la URL cambia después del login)
+  // ARCA puede redirigir a distintas URLs: /contribuyente/, /portal/, /portalcf/, etc.
   try {
-    await page.waitForURL('**/contribuyente/**', { timeout: TIMEOUT_NAV });
-    log('Login exitoso.');
+    await page.waitForURL((url) => !url.href.includes('login.xhtml'), { timeout: TIMEOUT_NAV });
+    log(`Login exitoso. URL: ${page.url()}`);
   } catch {
     // Si la URL no cambió, verificar si seguimos en la página de login
     const currentUrl = page.url();
@@ -162,26 +163,100 @@ async function login(page) {
       throw new Error('Login fallido: la página no avanzó del login. Verificá las credenciales.');
     }
     // Si la URL cambió pero no matchea el patrón, puede estar ok
-    log('Login exitoso (URL alternativa).');
+    log(`Login exitoso (URL alternativa). URL: ${page.url()}`);
   }
+
+  // Dar tiempo al portal para cargar completamente
+  await page.waitForTimeout(3000);
 }
 
 async function abrirMisComprobantes(page) {
   log('Buscando enlace "Mis Comprobantes"...');
-  const link = locate(page, SELECTORS.portal.misComprobantesLink);
-  await link.waitFor({ state: 'visible', timeout: TIMEOUT_NAV });
+  log(`URL actual post-login: ${page.url()}`);
 
-  // "Mis Comprobantes" abre un popup
-  log('Abriendo Mis Comprobantes (popup)...');
-  const popupPromise = page.waitForEvent('popup', { timeout: TIMEOUT_NAV });
-  await link.click();
-  const popup = await popupPromise;
+  // Esperar a que la página del portal se estabilice
+  await page.waitForLoadState('networkidle', { timeout: TIMEOUT_NAV }).catch(() => {
+    log('networkidle timeout — continuando de todas formas...');
+  });
 
-  // Esperar a que el popup cargue
-  await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
-  log('Popup de Mis Comprobantes abierto.');
+  // Estrategia 1: buscar el link con múltiples selectores
+  const linkStrategies = [
+    { desc: 'filter hasText', sel: SELECTORS.portal.misComprobantesLink },
+    { desc: 'text exact', sel: { text: 'Mis Comprobantes' } },
+    { desc: 'text partial', sel: { locator: 'a[href*="comprobantes"], a[href*="Comprobantes"]' } },
+    { desc: 'text partial 2', sel: { locator: 'a:has-text("Comprobantes")' } },
+  ];
 
-  return popup;
+  let link = null;
+  for (const { desc, sel } of linkStrategies) {
+    try {
+      const loc = locate(page, sel);
+      const visible = await loc.first().isVisible({ timeout: 5000 }).catch(() => false);
+      if (visible) {
+        log(`Enlace encontrado con estrategia: ${desc}`);
+        link = loc.first();
+        break;
+      }
+    } catch {
+      // probar siguiente
+    }
+  }
+
+  if (link) {
+    // "Mis Comprobantes" normalmente abre un popup
+    log('Abriendo Mis Comprobantes...');
+    try {
+      const popupPromise = page.waitForEvent('popup', { timeout: 15_000 });
+      await link.click();
+      const popup = await popupPromise;
+      await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+      log('Popup de Mis Comprobantes abierto.');
+      return popup;
+    } catch {
+      // Si no abre popup, tal vez navega en la misma página
+      log('No se abrió popup, verificando si navegó en la misma página...');
+      await page.waitForTimeout(3000);
+      const currentUrl = page.url();
+      if (currentUrl.includes('comprobantes') || currentUrl.includes('Comprobantes')) {
+        log('Mis Comprobantes abierto en la misma página.');
+        return page;
+      }
+      log('Click no produjo navegación, intentando estrategia directa...');
+    }
+  } else {
+    log('No se encontró el enlace "Mis Comprobantes" en el portal.');
+    // Tomar screenshot para debug
+    const debugPath = path.join(CSV_DIR, `debug_portal_${Date.now()}.png`);
+    await page.screenshot({ path: debugPath, fullPage: true }).catch(() => {});
+    log(`Screenshot de debug guardado en: ${debugPath}`);
+  }
+
+  // Estrategia 2: navegar directamente al servicio
+  log('Intentando navegar directamente a Mis Comprobantes...');
+  const directUrls = [
+    'https://serviciosweb.afip.gob.ar/genericos/comprobantes/',
+    'https://fe.afip.gob.ar/serviciosWeb/consultas/consultaComprobantes.aspx',
+  ];
+
+  for (const url of directUrls) {
+    try {
+      log(`Probando URL directa: ${url}`);
+      await page.goto(url, { timeout: TIMEOUT_NAV, waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(2000);
+      const currentUrl = page.url();
+      // Si nos redirigió al login, no funcionó
+      if (currentUrl.includes('auth.afip') || currentUrl.includes('login')) {
+        log('Redirigido al login, probando siguiente URL...');
+        continue;
+      }
+      log(`Mis Comprobantes abierto directamente: ${currentUrl}`);
+      return page;
+    } catch {
+      log(`URL ${url} falló, probando siguiente...`);
+    }
+  }
+
+  throw new Error('No se pudo abrir "Mis Comprobantes". ARCA puede haber cambiado su interfaz. Verificá manualmente en https://auth.afip.gob.ar');
 }
 
 /**

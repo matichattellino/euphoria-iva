@@ -333,9 +333,14 @@ app.post('/api/upload', upload.fields([
 // --- Scraper: lanzar ---
 app.post('/api/scraper/run', (req, res) => {
   try {
-    const { periodo, fechaDesde, fechaHasta } = req.body;
-    if (!periodo || !/^\d{4}-\d{2}$/.test(periodo)) {
-      return res.status(400).json({ error: 'Falta campo "periodo" con formato YYYY-MM' });
+    const body = req.body || {};
+    // Default: mes actual si no se envía periodo
+    const now = new Date();
+    const defaultPeriodo = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodo = body.periodo || defaultPeriodo;
+    const { fechaDesde, fechaHasta } = body;
+    if (!/^\d{4}-\d{2}$/.test(periodo)) {
+      return res.status(400).json({ error: 'Formato de periodo inválido. Usar YYYY-MM' });
     }
     scraperManager.runScraper(periodo, fechaDesde, fechaHasta);
     res.json({ ok: true, status: scraperManager.getStatus() });
