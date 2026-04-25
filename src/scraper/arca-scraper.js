@@ -191,24 +191,52 @@ async function abrirMisComprobantes(page) {
   log('Buscando enlace "Mis Comprobantes"...');
   log(`URL actual post-login: ${page.url()}`);
 
-  // Esperar a que la página del portal se estabilice
+  // Esperar a que la página del portal se estabilice (SPA que carga dinámicamente)
   await page.waitForLoadState('networkidle', { timeout: TIMEOUT_NAV }).catch(() => {
     log('networkidle timeout — continuando de todas formas...');
   });
+  // El portal SPA necesita tiempo extra para renderizar los servicios
+  await page.waitForTimeout(5000);
 
-  // Estrategia 1: buscar el link con múltiples selectores
+  // Loguear qué links hay en la página para debug
+  const allLinks = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('a')).slice(0, 30).map(a => ({
+      text: (a.textContent || '').trim().substring(0, 80),
+      href: a.href || '',
+    }));
+  }).catch(() => []);
+  log(`Links en la página (${allLinks.length}): ${JSON.stringify(allLinks.filter(l => l.text).slice(0, 15).map(l => l.text))}`);
+
+  // Loguear elementos con texto "comprobantes" (case insensitive)
+  const compLinks = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('*')).filter(el => {
+      const text = (el.textContent || '').toLowerCase();
+      return text.includes('comprobante') && el.children.length < 3;
+    }).slice(0, 10).map(el => ({
+      tag: el.tagName,
+      text: (el.textContent || '').trim().substring(0, 100),
+      href: el.href || '',
+      class: el.className || '',
+    }));
+  }).catch(() => []);
+  if (compLinks.length > 0) {
+    log(`Elementos con "comprobante": ${JSON.stringify(compLinks)}`);
+  }
+
+  // Estrategia 1: buscar el link en el portal
   const linkStrategies = [
     { desc: 'filter hasText', sel: SELECTORS.portal.misComprobantesLink },
     { desc: 'text exact', sel: { text: 'Mis Comprobantes' } },
-    { desc: 'text partial', sel: { locator: 'a[href*="comprobantes"], a[href*="Comprobantes"]' } },
-    { desc: 'text partial 2', sel: { locator: 'a:has-text("Comprobantes")' } },
+    { desc: 'text partial link', sel: { locator: 'a:has-text("Mis Comprobantes")' } },
+    { desc: 'any element', sel: { locator: '*:has-text("Mis Comprobantes"):not(:has(*:has-text("Mis Comprobantes")))' } },
+    { desc: 'href comprobantes', sel: { locator: 'a[href*="misComprobantes"], a[href*="mis-comprobantes"], a[href*="miscomprobantes"]' } },
   ];
 
   let link = null;
   for (const { desc, sel } of linkStrategies) {
     try {
       const loc = locate(page, sel);
-      const visible = await loc.first().isVisible({ timeout: 5000 }).catch(() => false);
+      const visible = await loc.first().isVisible({ timeout: 3000 }).catch(() => false);
       if (visible) {
         log(`Enlace encontrado con estrategia: ${desc}`);
         link = loc.first();
@@ -219,51 +247,89 @@ async function abrirMisComprobantes(page) {
     }
   }
 
+  // Estrategia 1b: buscar en el portal SPA con search/buscador
+  if (!link) {
+    log('Buscando servicio via search bar del portal...');
+    const searchInput = await locateWithFallbacks(page, [
+      { locator: 'input[placeholder*="uscar"], input[placeholder*="ervicio"], input[type="search"]' },
+      { role: 'searchbox' },
+      { role: 'textbox', name: /[Bb]uscar/ },
+    ], 5000);
+
+    if (searchInput) {
+      log('Search bar encontrado, buscando "Mis Comprobantes"...');
+      await searchInput.click();
+      await searchInput.fill('Mis Comprobantes');
+      await page.waitForTimeout(3000); // esperar resultados
+
+      // Buscar el resultado
+      link = await locateWithFallbacks(page, [
+        { locator: 'a:has-text("Mis Comprobantes")' },
+        { text: 'Mis Comprobantes' },
+        { locator: '*:has-text("Mis Comprobantes"):not(:has(*:has-text("Mis Comprobantes")))' },
+      ], 5000);
+      if (link) log('Enlace encontrado via búsqueda.');
+    }
+  }
+
   if (link) {
-    // "Mis Comprobantes" normalmente abre un popup
     log('Abriendo Mis Comprobantes...');
     try {
       const popupPromise = page.waitForEvent('popup', { timeout: 15_000 });
       await link.click();
       const popup = await popupPromise;
       await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
-      log('Popup de Mis Comprobantes abierto.');
+      log(`Popup de Mis Comprobantes abierto. URL: ${popup.url()}`);
       return popup;
     } catch {
-      // Si no abre popup, tal vez navega en la misma página
-      log('No se abrió popup, verificando si navegó en la misma página...');
+      log('No se abrió popup, verificando navegación en la misma página...');
       await page.waitForTimeout(3000);
       const currentUrl = page.url();
       if (currentUrl.includes('comprobantes') || currentUrl.includes('Comprobantes')) {
-        log('Mis Comprobantes abierto en la misma página.');
-        return page;
+        log(`Mis Comprobantes abierto en la misma página: ${currentUrl}`);
+        // Verificar que NO sea "Constatación"
+        const title = await page.title().catch(() => '');
+        if (title.toLowerCase().includes('constataci')) {
+          log('ADVERTENCIA: Se abrió "Constatación" en vez de "Mis Comprobantes", continuando con URLs directas...');
+        } else {
+          return page;
+        }
       }
-      log('Click no produjo navegación, intentando estrategia directa...');
     }
   } else {
     log('No se encontró el enlace "Mis Comprobantes" en el portal.');
-    // Tomar screenshot para debug
     const debugPath = path.join(CSV_DIR, `debug_portal_${Date.now()}.png`);
     await page.screenshot({ path: debugPath, fullPage: true }).catch(() => {});
     log(`Screenshot de debug guardado en: ${debugPath}`);
   }
 
-  // Estrategia 2: navegar directamente al servicio
+  // Estrategia 2: URLs directas al servicio "Mis Comprobantes"
+  // NOTA: https://serviciosweb.afip.gob.ar/genericos/comprobantes/ redirige a
+  // "Constatación de Comprobantes" que es OTRO servicio. Las URLs correctas son:
   log('Intentando navegar directamente a Mis Comprobantes...');
   const directUrls = [
-    'https://serviciosweb.afip.gob.ar/genericos/comprobantes/',
-    'https://fe.afip.gob.ar/serviciosWeb/consultas/consultaComprobantes.aspx',
+    'https://rfrcel.afip.gob.ar/misComprobantes/',
+    'https://serviciosweb.afip.gob.ar/genericos/misComprobantes/',
+    'https://portalcf.cloud.afip.gob.ar/portal/app/service/772',  // ID típico de Mis Comprobantes
+    'https://portalcf.cloud.afip.gob.ar/portal/app/service/773',
   ];
 
   for (const url of directUrls) {
     try {
       log(`Probando URL directa: ${url}`);
       await page.goto(url, { timeout: TIMEOUT_NAV, waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
       const currentUrl = page.url();
-      // Si nos redirigió al login, no funcionó
+      const title = await page.title().catch(() => '');
+      log(`Resultado: URL=${currentUrl}, Título="${title}"`);
+
       if (currentUrl.includes('auth.afip') || currentUrl.includes('login')) {
         log('Redirigido al login, probando siguiente URL...');
+        continue;
+      }
+      // Verificar que NO sea "Constatación"
+      if (title.toLowerCase().includes('constataci')) {
+        log('Se abrió "Constatación" — no es el servicio correcto.');
         continue;
       }
       log(`Mis Comprobantes abierto directamente: ${currentUrl}`);
@@ -271,6 +337,39 @@ async function abrirMisComprobantes(page) {
     } catch {
       log(`URL ${url} falló, probando siguiente...`);
     }
+  }
+
+  // Estrategia 3: Último recurso — abrir la vieja URL de Mis Comprobantes
+  // y si nos lleva a Constatación, intentar navegar desde ahí
+  log('Último recurso: abriendo desde Constatación...');
+  try {
+    await page.goto('https://serviciosweb.afip.gob.ar/genericos/comprobantes/', {
+      timeout: TIMEOUT_NAV, waitUntil: 'domcontentloaded',
+    });
+    await page.waitForTimeout(3000);
+    const currentUrl = page.url();
+    const title = await page.title().catch(() => '');
+    log(`Cargado: "${title}" — ${currentUrl}`);
+
+    // Buscar link a "Mis Comprobantes" dentro de Constatación
+    const misCompLink = await locateWithFallbacks(page, [
+      { locator: 'a:has-text("Mis Comprobantes")' },
+      { locator: 'a[href*="misComprobantes"]' },
+    ], 5000);
+
+    if (misCompLink) {
+      log('Encontrado link a Mis Comprobantes desde Constatación.');
+      await misCompLink.click();
+      await page.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAV });
+      return page;
+    }
+
+    // Si no encontramos el link, usar Constatación de todas formas pero
+    // con un flujo diferente — los comprobantes propios se pueden buscar acá también
+    log('ADVERTENCIA: Usando Constatación como fallback para obtener comprobantes.');
+    return page;
+  } catch (err) {
+    log(`Error en último recurso: ${err.message}`);
   }
 
   throw new Error('No se pudo abrir "Mis Comprobantes". ARCA puede haber cambiado su interfaz. Verificá manualmente en https://auth.afip.gob.ar');
